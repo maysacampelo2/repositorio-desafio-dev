@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main, implementacao-folhagem-cia]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validar-api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: docker
+          POSTGRES_DB: treinamento-crud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d treinamento-crud"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:docker@localhost:5432/treinamento-crud
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+      - name: Instalar dependências
+        run: yarn install --frozen-lockfile
+      - name: Validar schema Prisma
+        run: yarn prisma validate
+      - name: Gerar Prisma Client
+        run: yarn generate
+      - name: Verificar TypeScript
+        run: yarn typecheck
+      - name: Compilar
+        run: yarn build
+      - name: Aplicar migrations
+        run: yarn migration:deploy
+      - name: Popular banco de exemplo
+        run: yarn seed
+      - name: Iniciar API compilada e testar rotas
+        run: |
+          yarn start > /tmp/folhagem-api.log 2>&1 &
+          API_PID=$!
+          trap 'kill $API_PID 2>/dev/null || true' EXIT
+          for tentativa in $(seq 1 30); do
+            if curl --silent --fail http://localhost:3001/ > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          node tests/smoke.js
